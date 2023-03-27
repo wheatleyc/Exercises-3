@@ -1,0 +1,421 @@
+---
+title: "Data Mining Homework 3"
+author: "Jack Freeman"
+date: "2023-03-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, comment = NA, warnings = NA)
+library(tidyverse)
+library(rsample)
+library(modelr)
+library(mosaic)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(gbm)
+library(ggmap)
+library(scales)
+options(scipen = 999)
+```
+
+\begin{center}
+\begingroup
+\fontfamily{cmr}\fontsize{14}{16}\selectfont
+Exercises 3
+\endgroup
+
+\begingroup
+\fontfamily{cmr}\fontsize{10}{12}\selectfont
+Jordan Despain and Jack Freeman
+\endgroup
+
+\begingroup
+\fontfamily{cmr}\fontsize{10}{12}\selectfont
+03/22/2023
+\endgroup
+\end{center}
+
+
+\begingroup
+\fontfamily{cmr}\fontsize{14}{16}\selectfont
+**What Causes What?**
+\endgroup
+
+&nbsp;
+
+**1**  
+
+You can't just run the regression of *Crime* on *Police* because there are a ton of other things that affect both the crime rate and the number of cops in a city that need to be taken into consideration, like poverty rates or how populated an area is. The results from this regression would be biased. At best, you might be able to get some sort of understanding of the correlation between these two variables.  
+
+&nbsp;
+
+**2**  
+
+The researchers were able to isolate the effect of *Police* on *Crime* by taking advantage of the terrorism alert system. When the threat level is orange, police presence is increased due to the threat of terrorism. This situation is unrelated to amount of street crime in the area. So, they can look at the effect these extra police on orange alert days has on street crime. From Table 2, we see the increased presence did indeed have a negative effect on total daily crime. Crime was lower on high alert days and their finding is statistically significant at a 5% level.  
+
+&nbsp;
+
+**3**  
+
+The researchers had to control for Metro ridership because it could be that tourists and residents were just more afraid to go out on high alert days and there was fewer potential victims and less activity on the streets. Controlling for Metro ridership helped determine if this was in fact what was happening. They find there was no diminishing effect on activity level in the city on these high alert days. So, controlling for Metro ridership helps better capture the effect of police presence on crime levels, and also helps better their argument for causality.  
+
+&nbsp;
+
+**4**  
+
+The results are estimating the effect of *Police* on *Crime* using high alert days and separating District 1 and the rest of the districts. District 1 is where the National Mall is located, which is in the same area as a lot of important buildings and monuments. So, on high alert days you would expect increased focus from police in this area as opposed to other districts. These results show there is a much larger statistically significant reduction effect on crime in District 1 compared to the rest of the districts. The effect on all the other districts is not statistically significant and cannot really tell us much about the effect in those areas. The researchers can use these results to provide more support to the argument that more police presence decreases crime levels.  
+
+\pagebreak
+
+\begingroup
+\fontfamily{cmr}\fontsize{14}{16}\selectfont
+**Tree Modeling: Dengue Cases**
+\endgroup
+
+&nbsp;
+
+```{r, include = FALSE, warning = FALSE, message = FALSE}
+dengue <- drop_na(dengue)
+dengue$city <- factor(dengue$city)
+dengue$season <- factor(dengue$season)
+```
+
+```{r, include = FALSE, warning = FALSE, message = FALSE}
+cart_error <- list()
+forest_error <- list()
+boost_error <- list()
+for (x in 1:10) {
+  dengue_split <- initial_split(dengue, prop = 0.8)
+  dengue_train <- training(dengue_split)
+  dengue_test <- testing(dengue_split)
+  dengue_tree = rpart(total_cases ~ precipitation_amt + avg_temp_k + max_air_temp_k
+                + specific_humidity + tdtr_k + city + season + precip_amt_kg_per_m2, 
+                data = dengue_train, 
+                control = rpart.control(cp = 0.0001))
+  out <- as.data.frame(dengue_tree$cptable)
+  thresh <- min(out$xerror + out$xstd)
+  cp_opt <- as.numeric(max(out$CP[out$xerror <= thresh]))
+  pruned_dengue <- prune(dengue_tree, cp=cp_opt)
+  
+  cart_error[[x]] <- rmse(pruned_dengue, dengue_test)
+  
+  dengue_forest <- randomForest(total_cases ~ precipitation_amt + avg_temp_k + max_air_temp_k
+                    + specific_humidity + tdtr_k + city + season + precip_amt_kg_per_m2, 
+                  data = dengue_train, importance = TRUE)
+  
+  forest_error[[x]] <- rmse(dengue_forest, dengue_test)
+  
+  dengue_boost <- gbm(total_cases ~ precipitation_amt + avg_temp_k + max_air_temp_k
+                    + specific_humidity + tdtr_k + city + season + precip_amt_kg_per_m2, 
+                  data = dengue_train,
+                  interaction.depth=4, n.trees=500, shrinkage=.05)
+  
+  
+  boost_error[[x]] <- rmse(dengue_boost, dengue_test)
+}
+rmse_cart <- round(mean(unlist(cart_error)), 2)
+rmse_forest <- round(mean(unlist(forest_error)), 2)
+rmse_boost <- round(mean(unlist(boost_error)), 2)
+```
+
+```{r, include = FALSE, warning = FALSE, message = FALSE}
+rmse_all <- c(rmse_cart, rmse_forest, rmse_boost)
+names <- c("CART", "Random Forest", "Gradient-Boosted Tree")
+df <- data.frame(names, rmse_all)
+```
+
+We decided to predict dengue cases instead of log dengue cases because we are aware of the size of the population of these two areas, and we thought the actual number of cases would give us a better idea of the severity of the disease in these areas. Basically, we just found it more interesting because it gave us a better idea of the entire situation. In our models we decided to include the variables, *precipitation_amt*, *avg_temp_k*, *max_air_temp_k*, *specific_humidity*, *tdtr_k*, *city*, *season*, *precip_amt_kg_per_m2*. We thought each of these were important based off the description given by the students who compiled it. We also played around with the different variables and found these gave us the best results. We created a loop to give us 10 sets of results for the CART, random forest, and boosted tree models. We included the train-test split in the loop to give us new sets each time. We then took the mean RMSE for each model to give us a better idea of which one actually performs better more consistently. Here are the results,  
+
+
+\begin{center}
+\begin{tabular}{|c|c|}
+\multicolumn{2}{c}{$\ \ \ \ \ \ \ \ \ \ \boldsymbol{Model} \ \ \ \ \ \ \ \ \ \ \ \ \ \boldsymbol{RMSE}$} \\\cline{1-2}
+CART & `r rmse_cart` \\\cline{1-2}
+Random Forest  & `r rmse_forest` \\\cline{1-2}
+Gradient-Boosted Tree & `r rmse_boost` \\\cline{1-2}
+\end{tabular}
+\end{center}
+
+&nbsp;
+
+We found that the random tree model was the most accurate on the testing data. So, we used this model to make our three partial dependence plots. Here is the first for *specific_humidity*,  
+
+```{r, include = TRUE, warning = FALSE, message = FALSE}
+dengue_split <- initial_split(dengue, prop = 0.8)
+dengue_train <- training(dengue_split)
+dengue_test <- testing(dengue_split)
+dengue_forest <- randomForest(total_cases ~ precipitation_amt + avg_temp_k + max_air_temp_k
+                              + specific_humidity + tdtr_k + city + season + precip_amt_kg_per_m2, 
+                              data = dengue_train, importance = TRUE)
+partialPlot(dengue_forest, dengue_test, 'specific_humidity', las = 1)
+```
+
+It is interesting over 18 you see a huge spike. It is as if this is the magic number for mosquitoes. Anything over 18 grams of water per kilogram of air is a good sign to really make sure your skin is covered and protected.
+
+\pagebreak
+
+Here is the second for *precipitation_amt*,  
+
+```{r, include = TRUE, warning = FALSE, message = FALSE}
+partialPlot(dengue_forest, dengue_test, 'precipitation_amt', las = 1)
+```
+
+We find the large dropoff in effect at low precipitation amounts really interesting. The rise at higher precipitation amounts is easier to understand, but it is very interesting to think about why we see a larger effect at the lower amounts as well. We know, in hot Texas days at least, when it just sprinkles and the sun comes out immediately after, you really feel the nasty humidity. So, maybe when it only rains a small amount, it is not enough to decrease the water vapor in the air. So, you still have high levels of humidity. These are just our thoughts however because we are definitely not meteorologists!
+
+\pagebreak
+
+For the third, we decided to use *max_air_temp_k* because we found the huge spike from around 302-305 very interesting. Here is this plot,  
+
+
+```{r, include = TRUE, warning = FALSE, message = FALSE}
+partialPlot(dengue_forest, dengue_test, 'max_air_temp_k', las = 1)
+```
+
+We wonder if this is an ideal temperature for humidity levels or if this temperature is preferred by mosquitoes. It definitely had us very curious, so that is why we decided to included this variable as our wild card.
+
+
+
+\pagebreak
+
+\begingroup
+\fontfamily{cmr}\fontsize{14}{16}\selectfont
+**Predictive Model Building: Green Certification**
+\endgroup
+
+&nbsp;
+
+```{r, include = FALSE, warning = FALSE, message = FALSE}
+green <- drop_na(greenbuildings)
+green <- green %>% mutate(revenue = Rent * leasing_rate)
+```
+
+```{r lm, include = FALSE, warning = FALSE, message = FALSE}
+green_split <- initial_split(green, prop = 0.8)
+green_train <- training(green_split)
+green_test <- testing(green_split)
+lm_green <- lm(revenue ~ . - CS_PropertyID - LEED - Energystar - Rent - leasing_rate - Gas_Costs - 
+                 Electricity_Costs + Gas_Costs*net + Electricity_Costs*net, data = green_train)
+lm_test <- do(10)*{
+  green_split <- initial_split(green, prop = 0.8)
+  green_train <- training(green_split)
+  green_test <- testing(green_split)
+  lm_green <- update(lm_green, data = green_train)
+  error_green <- rmse(lm_green, green_test)
+}
+rmse_lm <- round(colMeans(lm_test), 2)
+```
+
+```{r others, include = FALSE, warning = FALSE, message = FALSE}
+green_forest_error <- list()
+green_boost_error <- list()
+for (x in 1:10) {
+  green_split <- initial_split(green, prop = 0.8)
+  green_train <- training(green_split)
+  green_test <- testing(green_split)
+  green_forest <- randomForest(revenue ~ . - CS_PropertyID - LEED - Energystar - Rent - leasing_rate -
+                               Gas_Costs - Electricity_Costs + Gas_Costs*net + Electricity_Costs*net,
+                               data = green_train, importance = TRUE)
+  
+  green_forest_error[[x]] <- rmse(green_forest, green_test)
+  
+  green_boost <- gbm(revenue ~ . - CS_PropertyID - LEED - Energystar - Rent - leasing_rate - Gas_Costs - 
+                 Electricity_Costs + Gas_Costs*net + Electricity_Costs*net, data = green_train,
+                 interaction.depth=4, n.trees=500, shrinkage=.05)
+  
+  
+  green_boost_error[[x]] <- rmse(green_boost, green_test)
+}
+rmse_forest_green <- round(mean(unlist(green_forest_error)), 2)
+rmse_boost_green <- round(mean(unlist(green_boost_error)), 2)
+```
+
+```{r partials, include = TRUE, warning = FALSE, message = FALSE}
+green_split <- initial_split(green, prop = 0.8)
+green_train <- training(green_split)
+green_test <- testing(green_split)
+green_forest <- randomForest(revenue ~ . - CS_PropertyID - LEED - Energystar - Rent - leasing_rate -
+                             Gas_Costs - Electricity_Costs + Gas_Costs*net + Electricity_Costs*net,
+                             data = green_train, importance = TRUE)
+```
+
+We want to build a model to try best predict revenue per square foot per calendar year, and then use this to try and get an idea of the effect a green certification has on rental income per square foot. To get started, we first prepare the data by creating the variable *revenue*, which is the product of *Rent* and *leasing_rate*. This variable represents the revenue per square foot per calendar year, so this is what we are trying to predict. We want to try multiple models to compare the results of each, so we choose a simple linear regression model, a random forest model, and a gradient-boosted tree model. Now, we start looking at the variables to try and decide what to include. We first remove *Rent* and *leasing_rate* because of their correlation with the outcome variable *revenue*. We also removed *LEED* and *Energystar* because we decided we were more interested in using the collapsed *green_rating* category variable. We also chose to remove *Electricity_Costs* and *Gas_Costs* as well, but then added them both in an interaction variable with *net* because we thought it would make the effect more interesting. Lastly, we removed the unique identifier variable *CS_Property_ID*.  
+
+Now that we have the variable we want to include in our models, we need to run the models and test their accuracy. We run each type of model 10 times in a loop, then take the average RMSE to try and get a better idea of their actual performance. Here are the results,  
+
+\begin{center}
+\begin{tabular}{|c|c|}
+\multicolumn{2}{c}{$\ \ \ \ \ \ \ \ \ \ \boldsymbol{Model} \ \ \ \ \ \ \ \ \ \ \ \ \ \boldsymbol{RMSE}$} \\\cline{1-2}
+Linear Regression & `r rmse_lm` \\\cline{1-2}
+Random Forest  & `r rmse_forest_green` \\\cline{1-2}
+Gradient-Boosted Tree & `r rmse_boost_green` \\\cline{1-2}
+\end{tabular}
+\end{center}
+
+&nbsp;
+
+We see that our random forest model seems to give us more accurate predictions. So, we will use our random forest model to now try and see what the effect of *green_rating* is. 
+
+\pagebreak
+
+We can get a rough idea of the average change in rental income per square foot associated with green certification by looking at a partial dependence plot of *green_rating*. Here is what this looks like,  
+
+``` {r, include=TRUE, warning=FALSE, message=FALSE}
+partialPlot(green_forest, green_test, 'green_rating', las = 1)
+```
+
+The variable *green_rating* is a binary variable, so we are interested in the difference in the values at 0 and 1. We see there is only about a difference of 60. This isn't much of an effect at all. It seems as those having a green certification may not be very significant on the amount of revenue received. We want to get a better idea of this variables importance by looking at the variable importance plot from our random forest model on the next page. 
+
+\pagebreak
+
+Here is the variable importance plot,  
+
+``` {r, include=TRUE, warning=FALSE, message=FALSE}
+varImpPlot(green_forest)
+```
+
+We see *green_rating* is near the bottom which means it's not very important and doesn't have much of an effect on our model's accuracy whether it is included or not. We notice some of the more important variables like *size* and *age* and we are curious what the effects of these variables look like. So, we want to check out the partial dependence plots for these and see if there is any interesting effects. We look at the plots on the next page.
+
+\pagebreak
+
+Here are the partial dependence plots for *size* and *age*,  
+
+``` {r, include=TRUE, warning=FALSE, message=FALSE, out.width=c('50%', '50%'), fig.show='hold'}
+partialPlot(green_forest, green_test, 'size', las = 1)
+partialPlot(green_forest, green_test, 'age', las = 1)
+```
+
+The effects are more along the lines of what you would expect to see. As the buildings increase in size, you would expect more rental income. Also, you would expect higher rental income from newer buildings and this decrease as the buildings get older. This is what we see in these plots. However, it is interesting in the plot for *age* how after 100 years you see a jump in revenue. We wonder why this is and if it has to do with some sort of historical effect or maybe the buildings have been renovated. We liked seeing this effect because it made us very curious about the cause of it.  
+
+&nbsp;
+
+So, from our results we found a building having a green certification doesn't really do much to increase rental income per square foot. We definitely thought it would have more of an effect, so we found our results very interesting. There are much more important variables like *size* and *age* that seem to make a significant difference of *revenue*.
+
+\pagebreak
+
+\begingroup
+\fontfamily{cmr}\fontsize{14}{16}\selectfont
+**Predictive Model Building: California Housing**
+\endgroup
+
+&nbsp;
+
+```{r, include = FALSE, warning = FALSE, message = FALSE}
+houses <- CAhousing %>%
+  mutate(avg_rooms_per = totalRooms/households)
+houses <- houses %>%
+  mutate(avg_bed_per = totalBedrooms/households)
+houses <- houses %>%
+  mutate(avg_house_size = population/households)
+```
+
+```{r, include = FALSE, warning = FALSE, message = FALSE}
+map <- get_stamenmap(bbox = c(left = -125, bottom = 32, right = -114, top = 42.2), zoom = 7, maptype = "toner-lite")
+data_map <-ggmap(map) + 
+  geom_point(houses, mapping = aes(x = longitude, y = latitude, color = medianHouseValue), size = .75) +
+  scale_color_gradient(low = "lawngreen", high = "darkgreen", label = comma) +
+  labs(x = "Longitude", y = "Latitude", color = "Median Value $") +
+  ggtitle("Median Home Values in California") +
+  theme(legend.position = c(-0.4, 0.7)) +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(plot.margin = unit(c(0.1, 0, 0.1, 0), "cm"))
+```
+
+```{r, include = FALSE, warning = FALSE, message = FALSE}
+houses_split <- initial_split(houses, prop = 0.8)
+houses_train <- training(houses_split)
+houses_test <- testing(houses_split)
+lm_houses <- lm(medianHouseValue ~ . - totalRooms - totalBedrooms + avg_rooms_per
+                + avg_bed_per + avg_house_size, data = houses_train)
+houses_lm_test <- do(10)*{
+  houses_split <- initial_split(houses, prop = 0.8)
+  houses_train <- training(houses_split)
+  houses_test <- testing(houses_split)
+  lm_houses <- update(lm_houses, data = houses_train)
+  error_houses <- rmse(lm_houses, houses_test)
+}
+rmse_lm_houses <- round(colMeans(houses_lm_test), 0)
+rmse_lm_houses <- format(rmse_lm_houses, scientific = F)
+```
+
+```{r, include = FALSE, warning = FALSE, message = FALSE}
+houses_forest_error <- list()
+for (x in 1:10) {
+  houses_split <- initial_split(houses, prop = 0.8)
+  houses_train <- training(houses_split)
+  houses_test <- testing(houses_split)
+  houses_forest <- randomForest(medianHouseValue ~ . - totalRooms - totalBedrooms + avg_rooms_per
+                + avg_bed_per + avg_house_size, data = houses_train, importance = TRUE)
+  
+  houses_forest_error[[x]] <- rmse(houses_forest, houses_test)
+}
+rmse_forest_houses <- round(mean(unlist(houses_forest_error)), 2)
+rmse_forest_houses <- format(rmse_forest_houses, scientific = F)
+```
+
+```{r, include = FALSE, warning = FALSE, message = FALSE}
+houses_split <- initial_split(houses, prop = 0.8)
+houses_train <- training(houses_split)
+houses_test <- testing(houses_split)
+houses_forest <- randomForest(medianHouseValue ~ . - totalRooms - totalBedrooms + avg_rooms_per
+              + avg_bed_per + avg_house_size, data = houses_train, importance = TRUE)
+houses$median_pred <- predict(houses_forest, houses)
+houses <- houses %>%
+  mutate(resids = medianHouseValue - median_pred)
+houses$resids <- round(houses$resids, 2)
+```
+
+```{r, include = FALSE, warning = FALSE, message = FALSE}
+pred_map <-ggmap(map) + 
+  geom_point(houses, mapping = aes(x = longitude, y = latitude, color = median_pred), size = .75) +
+  scale_color_gradient(low = "lawngreen", high = "darkgreen", label = comma) +
+  labs(x = "Longitude", y = "Latitude", color = "Median Value $") +
+  ggtitle("Predicted Median Home Values in California") +
+  theme(legend.position = c(-0.4, 0.7)) +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(plot.margin = unit(c(0.1, 0, 0.1, 0), "cm"))
+resid_map <-ggmap(map) + 
+  geom_point(houses, mapping = aes(x = longitude, y = latitude, color = resids), size = .75) +
+  scale_color_gradient2(low = "midnightblue", mid = "oldlace", high = "red4", label = comma) +
+  labs(x = "Longitude", y = "Latitude", color = "Residual $") +
+  ggtitle("Residuals") +
+  theme(legend.position = c(-0.4, 0.7)) +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(plot.margin = unit(c(0.1, 0, 0.1, 0), "cm"))
+```
+
+We now want to build a model to predict median home values in the state of California. We first take the variables *totalRooms* and *totalBedrooms* and divide these both by *households* to create two new variables *avg_rooms_per* and *avg_bed_per*. These variables give us the average number of rooms and bedrooms per household in each tract. We also create the variable *avg_house_size*, which is the average household size in each tract. We now want to create a linear model and a random forest model and compare the accuracy of each. We use all the variables include except *totalRooms* and *totalBedrooms* and include the variables we created. We run each model in a loop 10 times and take the average RMSE from both to help get a better idea of the real accuracy of the model. Here are the results,  
+
+\begin{center}
+\begin{tabular}{|c|c|}
+\multicolumn{2}{c}{$\ \ \ \ \ \ \ \ \ \ \boldsymbol{Model} \ \ \ \ \ \ \ \ \ \ \ \ \ \boldsymbol{RMSE}$} \\\cline{1-2}
+Linear Regression & `r rmse_lm_houses` \\\cline{1-2}
+Random Forest  & `r rmse_forest_houses` \\\cline{1-2}
+\end{tabular}
+\end{center}
+
+&nbsp;
+
+We see the random forest model does a much better job, so we will use this to create our predicted values to map using the package "ggmap". So, we run our model then predict median home values. We also want to create a map with residuals, so we create a residual variable by subtracting the predicted values from the real values. We display each of our maps over the next three pages. The first map is a map of the real data. As you would expect, the higher home values are mostly near the coast and near the large cities. Then second map is our predicted median values. We see it is pretty similar, so it seems like the model has does a decent job just by comparing the maps. Our last map is the residuals. We use two dark colors for the extremes and a light color for close to zero to try and better identify where the higher error is coming from and if these are more over-predictions or under-predictions. A positive value in this case would mean the actual value is higher than the predicted value, so red represents under-predictions. Just from looking at the map, it seems there are more under-predictions than over-predictions. Also, most of the inaccuracy seems to fall near the more populated areas.
+
+\pagebreak
+
+```{r, include = TRUE, warning = FALSE, message = FALSE, out.width = '150%', fig.align = "center"}
+data_map
+```
+
+\pagebreak
+
+```{r, include = TRUE, warning = FALSE, message = FALSE, out.width = '150%', fig.align = "center"}
+pred_map
+```
+
+\pagebreak
+
+```{r, include = TRUE, warning = FALSE, message = FALSE, out.width = '150%', fig.align = "center"}
+resid_map
+```
+
+

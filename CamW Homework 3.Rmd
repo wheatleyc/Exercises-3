@@ -1,0 +1,405 @@
+---
+title: "Homework 3"
+author: "Cameron Wheatley"
+date: "2023-03-27"
+output: html_document
+---
+
+## 1 What causes what?
+
+# Question 1. Why can’t I just get data from a few different cities 
+# and run the regression of “Crime” on “Police” to understand how more cops
+# in the streets affect crime? 
+# (“Crime” refers to some measure of crime rate and “Police” measures the number of cops in a city.)
+
+# **If using a simple linear regression model with the "Crime" and "Police" data,
+# the population regression function will contain the issue of selection bias as endogeneity will occur.
+# E(xu)=0 is violated in this case and OLS becomes inconsistent due to the changes in police force
+# being associated with both changes in crime and the error term in the estimate.**
+
+
+# Question 2. How were the researchers from UPenn able to isolate this effect? 
+# Briefly describe their approach and discuss their result in the “Table 2” below, 
+# from the researchers’ paper.
+
+# **Here, the dummy variable of "high-alert periods" gets rid of the endogeneity issue
+# for police on crime as the alert level directly impacts the number of units sent to a 
+# particular district. Furthermore, the authors choose the data that includes information of
+# repeted terror alerts which accounts for perfect first order autocorrelation (serial correlation).
+# The authors have seasonal dummies to measure the variables' effects based on the day of the week
+# (decreasing treatment window). Finally, the authors estimate a "Metro ridership" variable that accounts 
+# for tourism and crime correlation.
+
+# Based on the results from Table 2, while high alert days decreases crime by approximately 7 crimes
+# per day (significant at the 5% level), increased metro ridership was associated with a small increase in
+# the number of crimes committed. When the authors included a logged midday metro ridership variable,
+# high alert levels were not being confounded with levels of tourism (high alert levels did not increase).
+# Therefore, change in the number of tourists on a given day does not explain a significant change in crime
+# level. This is due to the variable of midday metro ridership accounting for the fluctuations in crime caused
+# by tourism.**
+
+
+# Question 3. Why did they have to control for Metro ridership? What was that trying to capture?
+
+# **The authors are attempting to capture the amount of potential victims. By testing whether tourism
+# is decreased on the high alert days, the amount of potential victims decreases causing less crime.**
+
+# Question 4. Below I am showing you “Table 4” from the researchers’ paper. 
+# Just focus on the first column of the table. Can you describe the model being estimated here? 
+# What is the conclusion?
+
+# **The model from Table 4 shows fixed effects grouped by district which demonstrates a particular
+# clustered crime pattern for each district. By clustering by the day of the week, the dependent variable
+# of daily crime totals by district is now able to be unbiased and efficient. When a particular period
+# is in high alert, National Mall crime decreases by approximately 2.6 crimes daily in district 1. While
+# crime also decreases in other districts, the results were not as strongly significant (i.e. closer to zero).
+# Therefore, taking only district 1 into account, number of crimes decreases by approximately 15% on high alert
+# days.**
+
+## 2 Tree modeling: dengue cases
+
+```{r, include=FALSE}
+library(tidyverse)
+library(rpart)
+library(rpart.plot)
+library(rsample) 
+library(dplyr)
+library(randomForest)
+library(lubridate)
+library(modelr)
+library(gbm)
+library(pdp)
+library(readr)
+dengue <- read_csv("https://raw.githubusercontent.com/jgscott/ECO395M/master/data/dengue.csv")
+```
+
+```{r, include = FALSE, warning = FALSE, message = FALSE}
+dengue2 <- dengue %>% filter(is.na(dengue$max_air_temp_k) == FALSE)  %>% 
+  filter(is.na(precipitation_amt) == FALSE)
+
+dengue2$season = factor(dengue2$season)
+dengue2$city = factor(dengue2$city)
+
+dengue_split = initial_split(dengue2)
+dengue_train = training(dengue_split)
+dengue_test = testing(dengue_split)
+
+dengue_forest = randomForest(total_cases ~ season + city + precipitation_amt + air_temp_k + 
+                               dew_point_temp_k + specific_humidity + tdtr_k,
+                             data=dengue_train, importance = TRUE)
+```
+
+```{r, include = TRUE, warning = FALSE, message = FALSE}
+plot(dengue_forest)
+
+partialPlot(dengue_forest, as.data.frame(dengue_test), precipitation_amt, las=1)
+```
+
+```{r, include = FALSE, warning = FALSE, message = FALSE}
+dengue_train_split = initial_split(dengue_train)
+dengue_train_build = training(dengue_train_split)
+dengue_train_check = testing(dengue_train_split)
+
+dengue_boost1 = gbm(total_cases ~ season + city + precipitation_amt +
+                      air_temp_k + dew_point_temp_k + specific_humidity + tdtr_k,
+                    data=dengue_train_build,
+                    interaction.depth=20, n.trees=1000, shrinkage=.001)
+
+dengue_boost2 = gbm(total_cases ~ season + city + precipitation_amt +
+                      air_temp_k + dew_point_temp_k + specific_humidity + tdtr_k,
+                    data=dengue_train_build,
+                    interaction.depth=15, n.trees=1000, shrinkage=.001)
+
+dengue_boost3 = gbm(total_cases ~ season + city + precipitation_amt +
+                      air_temp_k + dew_point_temp_k + specific_humidity + tdtr_k,
+                    data=dengue_train,
+                    interaction.depth=18, n.trees=1000, shrinkage=.001)
+```
+
+```{r, include = TRUE, warning = FALSE, message = FALSE}
+rmse(dengue_boost1, dengue_train_check)
+rmse(dengue_boost2, dengue_train_check)
+rmse(dengue_boost3, dengue_train_check)
+
+p1 = pdp::partial(dengue_boost3, pred.var = 'specific_humidity', n.trees=1000)
+p1
+ggplot(p1) + geom_point(mapping=aes(x=specific_humidity, y=yhat))
+
+dengue_tree = rpart(total_cases ~ precipitation_amt + avg_temp_k + max_air_temp_k
+                + specific_humidity + tdtr_k + city + season + precip_amt_kg_per_m2, 
+                data = dengue_train, 
+                control = rpart.control(cp = 0.0001))
+  out <- as.data.frame(dengue_tree$cptable)
+  thresh <- min(out$xerror + out$xstd)
+  cp_opt <- as.numeric(max(out$CP[out$xerror <= thresh]))
+  pruned_dengue <- prune(dengue_tree, cp=cp_opt)
+
+modelr::rmse(pruned_dengue, dengue_test)
+modelr::rmse(dengue_forest, dengue_test)
+modelr::rmse(dengue_boost1, dengue_test)
+```
+# **The results suggest that the random forest has (slightly better than boosting) the best performance on the testing data.**
+
+## 3 Predictive model building: green certification
+
+```{r, include=FALSE}
+library(tidyverse)
+library(rsample)
+library(modelr)
+library(mosaic)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(gbm)
+library(ggmap)
+library(scales)
+
+library(readr)
+greenbuildings <- read_csv("https://raw.githubusercontent.com/jgscott/ECO395M/master/data/greenbuildings.csv")
+```
+
+# 3.1 Overview
+
+# **Landlords are worried about revenue by square feet per year. Given that their leasing revenue
+# depends on many factors/parameters that are apart of a tenants' living environment, people
+# might pay more money to a landlord that has a green certification. Thus, conducting research on
+# a potential relationship between rent income and green certification could be worthwhile. Thus, we
+# will find the best best model possible that predicts revenue per square foot in order to measure the
+# estimated change in rental income when taking green certification into account.**
+
+# 3.2 Data and research design
+
+# 3.2.1 Data
+
+# **There are 7,894 data points from the raw data. When filtering the data, 
+# "greenbuildings" now has 7,820 observations.**
+
+# 3.2.2 Predictive variable and features
+
+# **Yearly revenue per square foot becomes the predictive variable which is the product of rent, leasing_rate...
+# holding all other covariates fixed.
+
+# The features of our model...
+
+# cluster: an identifier for the building cluster, with each cluster containing one green-certified building and at least one other non-green-certified building within a quarter-mile radius of the cluster center.
+
+# size: the total square footage of available rental space in the building.
+
+# empl.gr: the year-on-year growth rate in employment in the building's geographic region.
+
+# stories: the height of the building in stories.
+
+# age: the age of the building in years.
+
+# renovated: whether the building has undergone substantial renovations during its lifetime.
+
+# class.a, class.b: indicators for two classes of building quality (the third is Class C). These are relative classifications within a specific market. Class A buildings are generally the highest-quality properties in a given market. Class B buildings are a notch down, but still of reasonable quality. Class C buildings are the least desirable properties in a given market.
+
+# green.rating: an indicator for whether the building is either LEED- or EnergyStar-certified.
+
+# net: an indicator as to whether the rent is quoted on a "net contract" basis. Tenants with net-rental contracts pay their own utility costs, which are otherwise included in the quoted rental price.
+
+# amenities: an indicator of whether at least one of the following amenities is available on-site: bank, convenience store, dry cleaner, restaurant, retail shops, fitness center.
+
+# cd.total.07: number of cooling degree days in the building's region in 2007. A degree day is a measure of demand for energy; higher values mean greater demand. Cooling degree days are measured relative to a baseline outdoor temperature, below which a building needs no cooling.
+
+# hd.total07: number of heating degree days in the building's region in 2007. Heating degree days are also measured relative to a baseline outdoor temperature, above which a building needs no heating.
+
+# total.dd.07: the total number of degree days (either heating or cooling) in the building's region in 2007.
+
+# Precipitation: annual precipitation in inches in the building's geographic region.
+
+# Gas.Costs: a measure of how much natural gas costs in the building's geographic region.
+
+# Electricity.Costs: a measure of how much electricity costs in the building's geographic region.
+
+# City_Market_Rent: a measure of average rent per square-foot per calendar year in the building's local market.**
+
+
+# Results
+
+```{r, include = FALSE, warning = FALSE, message = FALSE}
+green <- drop_na(greenbuildings)
+green <- green %>% mutate(revenue = Rent * leasing_rate)
+
+green_split <- initial_split(green, prop = 0.8)
+green_train <- training(green_split)
+green_test <- testing(green_split)
+lm_green <- lm(revenue ~ . - CS_PropertyID - LEED - Energystar - Rent - leasing_rate - Gas_Costs - 
+                 Electricity_Costs + Gas_Costs*net + Electricity_Costs*net, data = green_train)
+lm_test <- do(10)*{
+  green_split <- initial_split(green, prop = 0.8)
+  green_train <- training(green_split)
+  green_test <- testing(green_split)
+  lm_green <- update(lm_green, data = green_train)
+  error_green <- rmse(lm_green, green_test)
+}
+```
+
+```{r, include = TRUE, warning = FALSE, message = FALSE}
+rmse_lm <- round(colMeans(lm_test), 2)
+```
+
+```{r, include = FALSE, warning = FALSE, message = FALSE}
+green_forest_error <- list()
+green_boost_error <- list()
+for (x in 1:1) {
+  green_split <- initial_split(green, prop = 0.8)
+  green_train <- training(green_split)
+  green_test <- testing(green_split)
+  green_forest <- randomForest(revenue ~ . - CS_PropertyID - LEED - Energystar - Rent - leasing_rate -
+                                 Gas_Costs - Electricity_Costs + Gas_Costs*net + Electricity_Costs*net,
+                               data = green_train, importance = TRUE)
+  
+  green_forest_error[[x]] <- rmse(green_forest, green_test)
+  
+  green_boost <- gbm(revenue ~ . - CS_PropertyID - LEED - Energystar - Rent - leasing_rate - Gas_Costs - 
+                       Electricity_Costs + Gas_Costs*net + Electricity_Costs*net, data = green_train,
+                     interaction.depth=4, n.trees=500, shrinkage=.05)
+  
+  
+  green_boost_error[[x]] <- rmse(green_boost, green_test)
+}
+```
+
+```{r, include = TRUE, warning = FALSE, message = FALSE}
+rmse_forest_green <- round(mean(unlist(green_forest_error)), 2)
+rmse_boost_green <- round(mean(unlist(green_boost_error)), 2)
+```
+
+```{r, include = FALSE, warning = FALSE, message = FALSE}
+green_split <- initial_split(green, prop = 0.8)
+green_train <- training(green_split)
+green_test <- testing(green_split)
+green_forest <- randomForest(revenue ~ . - CS_PropertyID - LEED - Energystar - Rent - leasing_rate -
+                               Gas_Costs - Electricity_Costs + Gas_Costs*net + Electricity_Costs*net,
+                             data = green_train, importance = TRUE)
+```
+
+```{r, include = TRUE, warning = FALSE, message = FALSE}
+rmse_lm
+rmse_forest_green
+rmse_boost_green
+
+partialPlot(green_forest, as.data.frame(green_test), 'green_rating', las = 1)
+
+varImpPlot(green_forest)
+
+partialPlot(green_forest, as.data.frame(green_test), 'size', las = 1)
+partialPlot(green_forest, as.data.frame(green_test), 'age', las = 1)
+```
+
+# When comparing the linear model, random forest, boosting models, it was the random forest model that gave the most accurate predictions. The results show that green_rating doesn't have a significant impact on the model. However, parameters such as size and age were, on the other hand, significant.
+
+# Therefore, building and having a green certification did not have an impact on rental income per square foot.
+
+## 4 Predictive model building: California housing
+
+# **By dividing the variables total rooms and total bedrooms by the number of households, we were able to obtain the mean of rooms and bedrooms per household in each tract. We also obtained the variable mean house size for our model. Finally, by including all variables except for total rooms and total bedrooms, we calculated the average RMSE from both a linear model and random forest to obtain the best accuracy possible.**
+
+```{r, include=FALSE}
+library(readr)
+CAhousing <- read_csv("https://raw.githubusercontent.com/jgscott/ECO395M/master/data/CAhousing.csv")
+```
+
+```{r, include = FALSE, warning = FALSE, message = FALSE}
+houses <- CAhousing %>%
+  mutate(avg_rooms_per = totalRooms/households)
+houses <- houses %>%
+  mutate(avg_bed_per = totalBedrooms/households)
+houses <- houses %>%
+  mutate(avg_house_size = population/households)
+```
+
+```{r, include = TRUE, warning = FALSE, message = FALSE}
+map <- get_stamenmap(bbox = c(left = -125, bottom = 32, right = -114, top = 42.2), zoom = 7, maptype = "toner-lite")
+data_map <-ggmap(map) + 
+  geom_point(houses, mapping = aes(x = longitude, y = latitude, color = medianHouseValue), size = .75) +
+  scale_color_gradient(low = "lawngreen", high = "darkgreen", label = comma) +
+  labs(x = "Longitude", y = "Latitude", color = "Median Value $") +
+  ggtitle("Median Home Values in California") +
+  theme(legend.position = c(-0.4, 0.7)) +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(plot.margin = unit(c(0.1, 0, 0.1, 0), "cm"))
+```
+
+```{r, include = FALSE, warning = FALSE, message = FALSE}
+houses_split <- initial_split(houses, prop = 0.8)
+houses_train <- training(houses_split)
+houses_test <- testing(houses_split)
+lm_houses <- lm(medianHouseValue ~ . - totalRooms - totalBedrooms + avg_rooms_per
+                + avg_bed_per + avg_house_size, data = houses_train)
+
+houses_lm_test <- do(10)*{
+  houses_split <- initial_split(houses, prop = 0.8)
+  houses_train <- training(houses_split)
+  houses_test <- testing(houses_split)
+  lm_houses <- update(lm_houses, data = houses_train)
+  error_houses <- rmse(lm_houses, houses_test)
+}
+```
+
+```{r, include = TRUE, warning = FALSE, message = FALSE}
+rmse_lm_houses <- round(colMeans(houses_lm_test), 0)
+rmse_lm_houses <- format(rmse_lm_houses, scientific = F)
+```
+
+```{r, include = FALSE, warning = FALSE, message = FALSE}
+houses_forest_error <- list()
+for (x in 1:1) {
+  houses_split <- initial_split(houses, prop = 0.8)
+  houses_train <- training(houses_split)
+  houses_test <- testing(houses_split)
+  houses_forest <- randomForest(medianHouseValue ~ . - totalRooms - totalBedrooms + avg_rooms_per
+                                + avg_bed_per + avg_house_size, data = houses_train, importance = TRUE)
+  
+  houses_forest_error[[x]] <- rmse(houses_forest, houses_test)
+}
+```
+
+```{r, include = TRUE, warning = FALSE, message = FALSE}
+rmse_forest_houses <- round(mean(unlist(houses_forest_error)), 2)
+rmse_forest_houses <- format(rmse_forest_houses, scientific = F)
+```
+
+```{r, include = FALSE, warning = FALSE, message = FALSE}
+houses_split <- initial_split(houses, prop = 0.8)
+houses_train <- training(houses_split)
+houses_test <- testing(houses_split)
+houses_forest <- randomForest(medianHouseValue ~ . - totalRooms - totalBedrooms + avg_rooms_per
+                              + avg_bed_per + avg_house_size, data = houses_train, importance = TRUE)
+houses$median_pred <- predict(houses_forest, houses)
+houses <- houses %>%
+  mutate(resids = medianHouseValue - median_pred)
+houses$resids <- round(houses$resids, 2)
+```
+
+```{r, include = TRUE, warning = FALSE, message = FALSE}
+pred_map <-ggmap(map) + 
+  geom_point(houses, mapping = aes(x = longitude, y = latitude, color = median_pred), size = .75) +
+  scale_color_gradient(low = "lawngreen", high = "darkgreen", label = comma) +
+  labs(x = "Longitude", y = "Latitude", color = "Median Value $") +
+  ggtitle("Predicted Median Home Values in California") +
+  theme(legend.position = c(-0.4, 0.7)) +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(plot.margin = unit(c(0.1, 0, 0.1, 0), "cm"))
+resid_map <-ggmap(map) + 
+  geom_point(houses, mapping = aes(x = longitude, y = latitude, color = resids), size = .75) +
+  scale_color_gradient2(low = "midnightblue", mid = "oldlace", high = "red4", label = comma) +
+  labs(x = "Longitude", y = "Latitude", color = "Residual $") +
+  ggtitle("Residuals") +
+  theme(legend.position = c(-0.4, 0.7)) +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(plot.margin = unit(c(0.1, 0, 0.1, 0), "cm"))
+
+rmse_lm_houses
+rmse_forest_houses
+
+data_map
+
+pred_map
+
+resid_map
+```
+
